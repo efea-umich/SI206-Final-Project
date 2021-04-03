@@ -1,60 +1,49 @@
-from keras.preprocessing.text import Tokenizer
+from keras.layers import *
+from keras.models import Sequential
+from tensorflow.keras.preprocessing.text import Tokenizer
 import pandas as pd
 import numpy as np
-import keras
-from tensorflow.python.keras.callbacks import ModelCheckpoint
 
-with open('OnionOrNot.csv', 'r') as hand:
-    data = pd.read_csv(hand)
-    headlines = data[data['label'] == 1]["text"]
+num_words = 75000
 
 
-max_words = 75000
-tokenizer = Tokenizer()
-tokenizer.fit_on_texts(headlines.values)
-sequences = tokenizer.texts_to_sequences(headlines.values)
-text = [item for sublist in sequences for item in sublist]
-vocab_size = len(tokenizer.word_index)
+def getHeadlines():
 
-print(text)
-print(np.shape(text))
+    # Open and sort dataset into Onion and real headline arrays
+    with open('OnionOrNot.csv', 'r', encoding='utf-8') as hand:
+        headlines = pd.read_csv(hand)
+        o = headlines[headlines["label"] == 1]
+        r = headlines[headlines["label"] == 0]
+    return o["text"].to_numpy(), r["text"].to_numpy()
 
-# Training on 19 words to predict the 20th
-sentence_len = 20
-pred_len = 1
-train_len = sentence_len - pred_len
-seq = []
-# Sliding window to generate train data
-for i in range(len(text)-sentence_len):
-    seq.append(text[i:i+sentence_len])
-# Reverse dictionary to decode tokenized sequences back to words
-reverse_word_map = dict(map(reversed, tokenizer.word_index.items()))
 
-# Each row in seq is a 20 word long window. We append he first 19 words as the input to predict the 20th word
-trainX = []
-trainy = []
-for i in seq:
-    trainX.append(i[:train_len])
-    trainy.append(i[-1])
-# define model
-model_2 = keras.models.Sequential([
-    keras.layers.Embedding(vocab_size+1, 50, input_length=train_len),
-    keras.layers.LSTM(100, return_sequences=True),
-    keras.layers.LSTM(100),
-    keras.layers.Dense(100, activation='relu'),
-    keras.layers.Dropout(0.1),
-    keras.layers.Dense(vocab_size, activation='softmax')
+
+onion, real = getHeadlines()
+
+x = np.concatenate([onion, real])
+y = np.concatenate([np.ones(onion.shape), np.zeros(real.shape)])
+
+# Assign the same random permutation to x (headlines) and y (labels)
+p = np.random.permutation(len(x))
+x = x[p]
+y = y[p]
+
+
+# Assign token to each word present in headlines
+tokenizer = Tokenizer(filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n\'`’‘')
+tokenizer.fit_on_texts(x)
+trainX = tokenizer.texts_to_sequences(x)
+indexLen = len(tokenizer.word_index)
+
+model = Sequential([
+    Embedding(indexLen + 1, 32),
+    LSTM(256),
+    Dropout(0.2),
+    LSTM(256),
+    Dropout(0.2),
+    Dense(1024, activation='relu'),
+    Dense(1, activation='sigmoid')
 ])
 
-# Train model with checkpoints
-model_2.compile(optimizer='adam',
-              loss='categorical_crossentropy',
-              metrics=['accuracy'])
-filepath = "./model_2_weights.hdf5"
-checkpoint = ModelCheckpoint(filepath, monitor='loss', verbose=1, save_best_only=True, mode='min')
-callbacks_list = [checkpoint]
-history = model_2.fit(np.asarray(trainX),
-         pd.get_dummies(np.asarray(trainy)),
-         epochs = 300,
-         batch_size = 128,
-         verbose = 1)
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+model.fit(trainX, y, epochs=10)
